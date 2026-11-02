@@ -15,12 +15,19 @@ from extractor.index import TTA4Index
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python extractor/main.py <path_to_archive.ttarch2> [--list]")
-        print("Example: python extractor/main.py \"C:\\GOG Games\\Minecraft Story Mode - Season Two\\Archives\\MC2_pc_PC_P2_Menu_compressed.ttarch2\"")
+        print("Usage: python extractor/main.py <path_to_archive.ttarch2> [--list] [--extract [dest_dir]]")
+        print("Example: python extractor/main.py \"C:\\GOG Games\\Minecraft Story Mode - Season Two\\Archives\\MC2_pc_CrowdPlayLAN_Project.ttarch2\" --extract")
         sys.exit(1)
 
     archive_path = sys.argv[1]
     list_files = "--list" in sys.argv
+    do_extract = "--extract" in sys.argv
+
+    custom_out = None
+    if do_extract:
+        idx = sys.argv.index("--extract")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("--"):
+            custom_out = sys.argv[idx + 1]
 
     if not os.path.exists(archive_path):
         print(f"Error: File not found: {archive_path}")
@@ -86,6 +93,20 @@ def main():
                     print(f"[{idx:4d}] 0x{entry.symbol_hash:016X}  {entry.data_size:<14,d} {name_str}")
         except Exception as e:
             print(f"Inner TTA4 Parse:   Failed ({e})")
+
+    if do_extract:
+        base_name = os.path.splitext(os.path.basename(info.filepath))[0]
+        out_dir = custom_out if custom_out else os.path.join("extracted_assets", base_name)
+        print("-" * 65)
+        print(f"Extracting resources to: {out_dir} ...")
+        total_res, extracted, errs = archive.extract_to(out_dir)
+        print(f"Extraction Completed: {extracted:,} / {total_res:,} files written.")
+        if errs:
+            print(f"Errors encountered ({len(errs)}):")
+            for err in errs[:10]:
+                print(f"  - {err}")
+            if len(errs) > 10:
+                print(f"  ... and {len(errs) - 10} more errors.")
 
     print("=" * 65)
 

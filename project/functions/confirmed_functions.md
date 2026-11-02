@@ -47,17 +47,23 @@ This catalog contains only 100% verified functions where the name, exact virtual
 - **Calling Convention**: `__fastcall`
 - **Evidence**: Clears context status flags; delegates to `BF_set_key` (`0x1401088b0`).
 
-### `Blowfish_ProcessBlocks`
+### `Blowfish_ProcessBlocks_Encrypt`
 - **Address**: `0x140107590`
-- **Prototype**: `void __fastcall Blowfish_ProcessBlocks(Blowfish_Context* ctx, uint8_t* data, size_t len)`
+- **Prototype**: `void __fastcall Blowfish_ProcessBlocks_Encrypt(Blowfish_Context* ctx, uint8_t* data, size_t len)`
 - **Calling Convention**: `__fastcall`
-- **Evidence**: Validates 8-byte block alignment (`test r8b, 7`), executes 16-round Feistel decryption on each 64-bit block in-place.
+- **Evidence**: Validates 8-byte block alignment (`test r8b, 7`), executes 16-round Feistel encryption on each 64-bit block starting at P[0].
+
+### `Blowfish_ProcessBlocks_Decrypt`
+- **Address**: `0x140107a10`
+- **Prototype**: `void __fastcall Blowfish_ProcessBlocks_Decrypt(Blowfish_Context* ctx, uint8_t* data, size_t len)`
+- **Calling Convention**: `__fastcall`
+- **Evidence**: Validates 8-byte block alignment (`test r8b, 7`), executes 16-round Feistel decryption on each 64-bit block in reverse starting at P[17] (`[r9 + 0x48]`).
 
 ### `BF_set_key`
 - **Address**: `0x1401088b0`
 - **Prototype**: `void __fastcall BF_set_key(Blowfish_Context* ctx, int key_len, const uint8_t* key_data)`
 - **Calling Convention**: `__fastcall`
-- **Evidence**: Copies standard Blowfish P-box (18 words) and S-boxes (1024 words) from `.rdata:0x140c3c560`. Performs key expansion loop and subkey generation.
+- **Evidence**: Copies standard Blowfish P-box (18 words) and S-boxes (1024 words) from `.rdata:0x140c3c560` / `0x140c3c5b0`. Performs key expansion loop and subkey generation.
 
 ---
 
@@ -77,9 +83,15 @@ This catalog contains only 100% verified functions where the name, exact virtual
 
 ### `luaScript_DecryptBytecode`
 - **Address**: `0x14015a480`
-- **Prototype**: `bool __fastcall luaScript_DecryptBytecode(uint8_t* buffer, size_t length)`
+- **Prototype**: `void __fastcall luaScript_DecryptBytecode(uint8_t* buffer, size_t length, Blowfish_Context* ctx)`
 - **Calling Convention**: `__fastcall`
-- **Evidence**: Checks encrypted header magic `\x1bLEo` (`0x6f454c1b`) / `\x1bLEn`, decrypts payload using Blowfish, and rewrites header to `\x1bLua` (`0x61754c1b`).
+- **Evidence**: Checks encrypted header magic `\x1bLEo` (`0x6f454c1b`) / `\x1bLEn`, decrypts `buffer + 4` using `Blowfish_ProcessBlocks_Decrypt` (`0x140107a10`), and rewrites header to standard Lua `\x1bLua` (`0x61754c1b`).
+
+### `luaScript_EncryptBytecode`
+- **Address**: `0x14015a420`
+- **Prototype**: `void __fastcall luaScript_EncryptBytecode(uint8_t* buffer, size_t length, Blowfish_Context* ctx)`
+- **Calling Convention**: `__fastcall`
+- **Evidence**: Rewrites `\x1bLua` to `\x1bLEo` / `\x1bLEn` and encrypts `buffer + 4` using `Blowfish_ProcessBlocks_Encrypt` (`0x140107590`).
 
 ---
 
@@ -89,17 +101,17 @@ This catalog contains only 100% verified functions where the name, exact virtual
 - **Address**: `0x140425ab0`
 - **Prototype**: `int __fastcall StreamDecoder_DecompressBlock(StreamDecoder* this)`
 - **Calling Convention**: `__fastcall`
-- **Evidence**: Checks encryption flag (`[rbx + 0x60]`); calls `Blowfish_ProcessBlocks` at `0x140425e08`. Evaluates compression scheme `[rbx + 0x78]`: `0` -> Zlib (`0x1408f6cb0`), `1` -> Oodle (`0x1408f6d40`).
+- **Evidence**: Checks encryption flag (`[rbx + 0x60]`); calls decryption routine. Evaluates compression scheme `[rbx + 0x78]`: `0` -> Zlib (`0x1408f6cb0`), `1` -> Oodle (`0x1408f6d40`).
 
 ### `Oodle_DecompressChunkWrapper`
 - **Address**: `0x1408f6d40`
-- **Prototype**: `bool __fastcall Oodle_DecompressChunkWrapper(void* compBuf, size_t compBufSize, void* rawBuf, size_t rawLen)`
+- **Prototype**: `bool __fastcall Oodle_DecompressChunkWrapper(void* rawBuf, size_t rawLen, const void* compBuf, size_t compBufSize)`
 - **Calling Convention**: `__fastcall`
-- **Evidence**: Calls `OodleLZ_Decompress` exported by `oo2core_5_win64.dll`.
+- **Evidence**: Evaluates `OodleLZ_GetChunkCompressor`, `OodleLZDecoder_MemorySizeNeeded`, and invokes `OodleLZ_Decompress` exported by `oo2core_5_win64.dll`.
 
 ### `Zlib_DecompressChunkWrapper`
 - **Address**: `0x1408f6cb0`
-- **Prototype**: `bool __fastcall Zlib_DecompressChunkWrapper(void* compBuf, size_t compBufSize, void* rawBuf, size_t rawLen)`
+- **Prototype**: `bool __fastcall Zlib_DecompressChunkWrapper(void* rawBuf, size_t rawLen, const void* compBuf, size_t compBufSize)`
 - **Calling Convention**: `__fastcall`
 - **Evidence**: Statically linked zlib `inflate` wrapper for legacy archives (`TTCZ`).
 

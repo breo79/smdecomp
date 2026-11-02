@@ -115,3 +115,83 @@ class TTArchive2:
         with open(self.filepath, "rb") as f:
             f.seek(12)
             return f.read()
+
+    def extract_to(self, output_dir: str) -> Tuple[int, int, List[str]]:
+        """
+        Extracts all resources contained in the archive to output_dir.
+        Returns: (total_resources, extracted_count, error_list)
+        """
+        from extractor.index import TTA4Index
+        import zlib
+
+        os.makedirs(output_dir, exist_ok=True)
+        errors = []
+        extracted_count = 0
+
+        # Step 1: Reassemble the virtual stream
+        if not self.info.is_chunked:
+            # NCTT: uncompressed raw payload starting at offset 12
+            stream_data = self.read_raw_payload()
+        else:
+            # Chunked archive: decrypt and decompress chunks
+            from extractor.blowfish import BlowfishCipher
+            from extractor.oodle import OodleDecompressor
+
+            bf = BlowfishCipher() if self.info.is_encrypted else None
+            oodle = OodleDecompressor() if self.info.compression_name.startswith("Oodle") else None
+
+            chunks = []
+            for i in range(self.info.chunk_count):
+                chunk_bytes = self.read_chunk(i)
+                if self.info.is_encrypted:
+                    chunk_bytes = bf.decrypt_chunk(chunk_bytes)
+                
+                if self.info.compression_name.startswith("Oodle"):
+                    try:
+                        raw_chunk = oodle.decompress(chunk_bytes, self.info.chunk_size)
+                    except Exception as e:
+                        # Fallback or passthrough
+                        raw_chunk = chunk_bytes
+                elif self.info.compression_name == "Zlib":
+                    try:
+                        raw_chunk = zlib.decompress(chunk_bytes)
+                    except Exception:
+                        raw_chunk = chunk_bytes
+                else:
+                    raw_chunk = chunk_bytes
+                chunks.append(raw_chunk)
+            stream_data = b"".join(chunks)
+
+        # Step 2: Parse TTA4 index
+        try:
+            index = TTA4Index(stream_data)
+        except Exception as e:
+            errors.append(f"Failed to parse inner TTA4 index: {e}")
+            return (0, 0, errors)
+
+        data_base = index.data_section_offset
+
+        # Step 3: Extract resources
+        for idx, entry in enumerate(index.entries):
+            file_off = data_base + entry.data_offset
+            file_size = entry.data_size
+            
+            if file_off + file_size > len(stream_data):
+                errors.append(f"Entry {idx} ({entry.name or hex(entry.symbol_hash)}): offset out of bounds")
+                continue
+
+            payload = stream_data[file_off : file_off + file_size]
+            filename = entry.name if entry.name else f"res_{entry.symbol_hash:016X}.bin"
+            out_path = os.path.join(output_dir, filename)
+
+            # Ensure subdirectories exist if filename contains relative paths
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+            try:
+                with open(out_path, "wb") as out_f:
+                    out_f.write(payload)
+                extracted_count += 1
+            except Exception as e:
+                errors.append(f"Failed to write {filename}: {e}")
+
+        return (index.entry_count, extracted_count, errors)
